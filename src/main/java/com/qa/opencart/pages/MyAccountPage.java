@@ -16,6 +16,7 @@ public class MyAccountPage {
 	private By MyAccountHeader=By.xpath("//h2[normalize-space()='My Account']");
 	private By Search=By.xpath("//input[@placeholder='Search']");
 	private By serachBtn=By.xpath("//button[@class='btn btn-default btn-lg']");
+	private By Ram=By.linkText(".ram");
 	
 	public MyAccountPage(WebDriver driver) {
 		this.driver=driver;
