@@ -95,10 +95,7 @@ jobs:
           APP_USERNAME:      ${{ secrets.APP_USERNAME }}
           APP_PASSWORD:      ${{ secrets.APP_PASSWORD }}
           DB_CONNECTION_URL: ${{ secrets.DB_CONNECTION_URL }}
-        run: |
-          mvn test `
-            --no-transfer-progress `
-            -DBatchFile=${{ github.event.inputs.suite || env.DEFAULT_SUITE }}
+        run: mvn test --no-transfer-progress "-DBatchFile=${{ github.event.inputs.suite || env.DEFAULT_SUITE }}"
         shell: pwsh
  
       # ── 8. Collect Regression Report into /reports folder ─────────────────────
