@@ -11,7 +11,7 @@ on:
       suite:
         description: 'TestNG suite XML to run'
         required: false
-        default: 'regression.xml'
+        default: 'Resources/TestRunners/Regression.xml'
       environment:
         description: 'Target environment'
         required: false
@@ -23,12 +23,11 @@ on:
           - Production
  
 env:
-  # ── Java 8 strictly required ──
-  # ── Lombok 1.18.12 in pom.xml is NOT compatible with Java 9+ ──
-  # ── Error on Java 17+: LombokProcessor cannot access JavacProcessingEnvironment ──
-  JAVA_VERSION: '8'
+  # ── Java 11 (Temurin) — aligned with pom.xml compiler settings ──
+  # ── Lombok 1.18.30 in pom.xml — compatible with Java 11 ──
+  JAVA_VERSION: '11'
   MAVEN_OPTS: '-Xmx2048m'
-  DEFAULT_SUITE: 'regression.xml'
+  DEFAULT_SUITE: 'Resources/TestRunners/Regression.xml'
   DEFAULT_ENV: 'QA'
  
 jobs:
@@ -40,17 +39,16 @@ jobs:
     timeout-minutes: 180
  
     steps:
-      # ── 1. Checkout master branch ───────────────────────────────────────────────
-      - name: Checkout master branch
+      # ── 1. Checkout main branch ───────────────────────────────────────────────
+      - name: Checkout main branch
         uses: actions/checkout@v4
         with:
-          ref: master
+          ref: main
           fetch-depth: 0
  
-      # ── 2. Set up Java 8 ──────────────────────────────────────────────────────
-      # IMPORTANT: Must be Java 8 (Temurin).
-      # Lombok 1.18.12 breaks on Java 9+ with:
-      # "LombokProcessor cannot access JavacProcessingEnvironment"
+      # ── 2. Set up Java 11 ─────────────────────────────────────────────────────
+      # Java 11 (Temurin) — matches pom.xml maven.compiler.source=11
+      # Lombok 1.18.30 is fully compatible with Java 11
       - name: Set up JDK ${{ env.JAVA_VERSION }}
         uses: actions/setup-java@v4
         with:
@@ -58,7 +56,7 @@ jobs:
           distribution: 'temurin'
           cache: maven
  
-      # ── 3. Verify Java 8 is active ────────────────────────────────────────────
+      # ── 3. Verify Java 11 is active ───────────────────────────────────────────
       - name: Verify Java version
         run: java -version
         shell: pwsh
@@ -86,19 +84,20 @@ jobs:
         shell: pwsh
  
       # ── 7. Run Selenium TestNG regression suite ───────────────────────────────
-      # Suite passed via -DBatchFile as defined in pom.xml surefire config
-      # WebDriverManager (v5.4.1) handles ChromeDriver automatically - no manual install needed
+      # Suite passed via -DBatchFile — reads ${BatchFile} in pom.xml surefire config
+      # WebDriverManager handles ChromeDriver automatically — no manual install needed
       # testFailureIgnore=true in pom.xml — build won't fail even if tests fail
       - name: Run Selenium Tests
         env:
-          APP_BASE_URL:     https://naveenautomationlabs.com/opencart/index.php?route=account/login
-          APP_USERNAME:     may2025@abc.com
-          APP_PASSWORD:      Test@123
+          APP_BASE_URL:      ${{ secrets.APP_BASE_URL }}
+          APP_USERNAME:      ${{ secrets.APP_USERNAME }}
+          APP_PASSWORD:      ${{ secrets.APP_PASSWORD }}
+          DB_CONNECTION_URL: ${{ secrets.DB_CONNECTION_URL }}
         run: mvn test --no-transfer-progress "-DBatchFile=${{ github.event.inputs.suite || env.DEFAULT_SUITE }}"
         shell: pwsh
  
       # ── 8. Collect Regression Report into /reports folder ─────────────────────
-      # Extent Reports (com.aventstack 3.1.5) writes to test-output/ by default
+      # Extent Reports (com.aventstack 5.0.8) writes to test-output/ by default
       - name: Collect Regression Reports
         if: always()
         run: |
