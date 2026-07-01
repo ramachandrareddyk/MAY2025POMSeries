@@ -39,11 +39,11 @@ jobs:
     timeout-minutes: 180
  
     steps:
-      # ── 1. Checkout main branch ───────────────────────────────────────────────
-      - name: Checkout main branch
+      # ── 1. Checkout master branch ───────────────────────────────────────────────
+      - name: Checkout master branch
         uses: actions/checkout@v4
         with:
-          ref: main
+          ref: master
           fetch-depth: 0
  
       # ── 2. Set up Java 11 ─────────────────────────────────────────────────────
