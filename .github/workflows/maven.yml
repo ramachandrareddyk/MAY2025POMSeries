@@ -1,80 +1,143 @@
-name: Nightly Regression Tests
-
+name: Selenium Regression - QA Nightly
+ 
 on:
+  # ── Scheduled: Every Thursday at 6:00 PM UTC (11:30 PM IST) ──
   schedule:
-    # Runs every night at midnight UTC (5:30 AM IST)
-    - cron: '0 0 * * *'
+    - cron: '0 18 * * 4'
+ 
+  # ── Manual trigger from GitHub Actions UI ──
   workflow_dispatch:
-    # Allows manual trigger from GitHub Actions UI
-
+    inputs:
+      suite:
+        description: 'TestNG suite XML to run'
+        required: false
+        default: 'regression.xml'
+      environment:
+        description: 'Target environment'
+        required: false
+        default: 'QA'
+        type: choice
+        options:
+          - QA
+          - UAT
+          - Production
+ 
+env:
+  # ── Java 8 strictly required ──
+  # ── Lombok 1.18.12 in pom.xml is NOT compatible with Java 9+ ──
+  # ── Error on Java 17+: LombokProcessor cannot access JavacProcessingEnvironment ──
+  JAVA_VERSION: '8'
+  MAVEN_OPTS: '-Xmx2048m'
+  DEFAULT_SUITE: 'regression.xml'
+  DEFAULT_ENV: 'QA'
+ 
 jobs:
-  regression-tests:
-    name: Run Selenium TestNG Regression Suite
-    runs-on: ubuntu-latest
-
+  selenium-regression:
+    name: Selenium TestNG - ${{ github.event.inputs.environment || 'QA' }} Regression
+    # ── GitHub-hosted runner (Windows Server) ──
+    # ── No self-hosted VM required for this repo ──
+    runs-on: windows-latest
+    timeout-minutes: 180
+ 
     steps:
-      # Step 1: Checkout the repository
-      - name: Checkout Code
+      # ── 1. Checkout main branch ───────────────────────────────────────────────
+      - name: Checkout main branch
         uses: actions/checkout@v4
-
-      # Step 2: Set up Java 17 (matches your maven.compiler.release)
-      - name: Set up JDK 17
+        with:
+          ref: main
+          fetch-depth: 0
+ 
+      # ── 2. Set up Java 8 ──────────────────────────────────────────────────────
+      # IMPORTANT: Must be Java 8 (Temurin).
+      # Lombok 1.18.12 breaks on Java 9+ with:
+      # "LombokProcessor cannot access JavacProcessingEnvironment"
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
         uses: actions/setup-java@v4
         with:
-          java-version: '17'
+          java-version: ${{ env.JAVA_VERSION }}
           distribution: 'temurin'
           cache: maven
-
-      # Step 3: Install Google Chrome (needed for Selenium)
-      - name: Install Google Chrome
+ 
+      # ── 3. Verify Java 8 is active ────────────────────────────────────────────
+      - name: Verify Java version
+        run: java -version
+        shell: pwsh
+ 
+      # ── 4. Cache Maven dependencies ───────────────────────────────────────────
+      - name: Cache Maven packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+ 
+      # ── 5. Clean previous Regression Reports ──────────────────────────────────
+      - name: Clean previous Regression Reports
         run: |
-          wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
-          echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
-          sudo apt-get update
-          sudo apt-get install -y google-chrome-stable
-          google-chrome --version
-
-      # Step 4: Fix TestNG XML path — GitHub Actions runs on Linux, so fix Windows backslashes
-      - name: Fix TestNG Suite Path in pom.xml
-        run: |
-          sed -i 's|Resources\\TestRunners\\Regression.xml|Resources/TestRunners/Regression.xml|g' pom.xml
-
-      # Step 5: Run Maven tests
-      - name: Run Regression Test Suite
-        run: mvn clean test -B
+          if (Test-Path "reports") { Remove-Item -Recurse -Force "reports" }
+          New-Item -ItemType Directory -Force -Path "reports"
+          Write-Host "Reports folder cleaned and ready"
+        shell: pwsh
+ 
+      # ── 6. Validate Maven project ─────────────────────────────────────────────
+      - name: Validate Maven project
+        run: mvn validate --no-transfer-progress
+        shell: pwsh
+ 
+      # ── 7. Run Selenium TestNG regression suite ───────────────────────────────
+      # Suite passed via -DBatchFile as defined in pom.xml surefire config
+      # WebDriverManager (v5.4.1) handles ChromeDriver automatically - no manual install needed
+      # testFailureIgnore=true in pom.xml — build won't fail even if tests fail
+      - name: Run Selenium Tests
         env:
-          # Add any environment variables your tests need, e.g.:
-          # BASE_URL: ${{ secrets.BASE_URL }}
-          # USERNAME: ${{ secrets.APP_USERNAME }}
-          # PASSWORD: ${{ secrets.APP_PASSWORD }}
-          JAVA_OPTS: "-Dheadless=true"
-
-      # Step 6: Upload ExtentReports HTML report as artifact
-      - name: Upload Test Report
-        if: always()  # Upload even if tests fail
-        uses: actions/upload-artifact@v4
-        with:
-          name: extent-report-${{ github.run_number }}
-          path: |
-            target/
-            Reports/
-            test-output/
-          retention-days: 7
-
-      # Step 7: Upload Surefire XML reports
-      - name: Upload Surefire Reports
+          APP_BASE_URL:      ${{ secrets.APP_BASE_URL }}
+          APP_USERNAME:      ${{ secrets.APP_USERNAME }}
+          APP_PASSWORD:      ${{ secrets.APP_PASSWORD }}
+          DB_CONNECTION_URL: ${{ secrets.DB_CONNECTION_URL }}
+        run: |
+          mvn test `
+            --no-transfer-progress `
+            -DBatchFile=${{ github.event.inputs.suite || env.DEFAULT_SUITE }}
+        shell: pwsh
+ 
+      # ── 8. Collect Regression Report into /reports folder ─────────────────────
+      # Extent Reports (com.aventstack 3.1.5) writes to test-output/ by default
+      - name: Collect Regression Reports
         if: always()
+        run: |
+          $reportSources = @(
+            "test-output\ExtentReport.html",
+            "test-output\extent-report.html",
+            "ExtentReports\ExtentReport.html",
+            "target\extent-reports\ExtentReport.html"
+          )
+          foreach ($src in $reportSources) {
+            if (Test-Path $src) {
+              Copy-Item $src -Destination "reports\RegressionReport.html" -Force
+              Write-Host "Regression Report collected from: $src"
+              break
+            }
+          }
+          if (Test-Path "target\surefire-reports") {
+            Copy-Item -Recurse "target\surefire-reports\*" -Destination "reports\" -Force
+          }
+          if (Test-Path "test-output") {
+            Copy-Item -Recurse "test-output\*" -Destination "reports\" -Force
+          }
+          if (Test-Path "target\screenshots") {
+            Copy-Item -Recurse "target\screenshots" -Destination "reports\screenshots" -Force
+          }
+          Write-Host ""
+          Write-Host "── Regression Report folder contents ──"
+          Get-ChildItem -Recurse "reports" | Select-Object FullName
+        shell: pwsh
+ 
+      # ── 9. Upload Regression Reports as artifact ──────────────────────────────
+      - name: Upload Regression Report Artifact
         uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: surefire-reports-${{ github.run_number }}
-          path: target/surefire-reports/
-          retention-days: 7
-
-      # Step 8: Notify on failure (optional — requires a Slack webhook secret)
-      # - name: Notify Slack on Failure
-      #   if: failure()
-      #   uses: slackapi/slack-github-action@v1.26.0
-      #   with:
-      #     payload: '{"text":"❌ Nightly regression tests FAILED! Check: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}'
-      #   env:
-      #     SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          name: RegressionReport-${{ github.event.inputs.environment || 'QA' }}-Run${{ github.run_number }}
+          path: reports/
+          retention-days: 30
